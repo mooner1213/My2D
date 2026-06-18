@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MyBird
 {
@@ -8,76 +9,67 @@ namespace MyBird
         public enum PlayerState { Idle, Playing, Dead }
 
         [Header("Controls")]
-        public KeyCode flapKey = KeyCode.Space;
+        public KeyCode flapKey = KeyCode.Space;     // 날갯짓 키
 
         [Header("Movement")]
-        public float forwardSpeed = 2f;
-        public float flapForce = 5f;
+        public float forwardSpeed = 2f;             // 앞으로 이동 속도
+        public float flapForce = 5f;                // 날갯짓 힘 (위로 튀는 세기)
+        public float playGravityScale = 1f;         // 플레이 중 중력 배율
 
-        [Header("Idle Hover")]
-        public float idleXOffset = -3f;      // 카메라 기준 X 오프셋 (왼쪽 위치 고정)
-        public float idleYOffset = 0f;       // 카메라 기준 Y 오프셋 (높이 고정)
-
-        [Header("Idle Gravity")]
-        public bool overrideIdleGravity = false; // true면 아래 값으로 idle 중 gravity를 설정
-        public float idleGravityScale = 0f;      // idle 중에 적용할 gravityScale (기본 0)
-
-        [Header("Play Gravity")]
-        public float playGravityScale = 1f;      // 플레이 중 적용할 gravityScale (조정 가능)
+        [Header("Idle Position")]
+        public float idleXOffset = -3f;             // 대기 중 카메라 기준 X 위치
+        public float idleYOffset = 0f;              // 대기 중 카메라 기준 Y 위치
 
         [Header("Rotation")]
-        public float rotationMultiplier = 5f;
-        public float maxRotation = 45f;
-        public float minRotation = -90f;
-        public float rotationSmooth = 8f;
+        public float rotationMultiplier = 5f;       // 속도 → 각도 변환 배율
+        public float maxRotation = 45f;             // 최대 회전각 (위쪽)
+        public float minRotation = -90f;            // 최소 회전각 (아래쪽)
+        public float rotationSmooth = 8f;           // 회전 부드러움 (클수록 빠름)
 
         [HideInInspector] public PlayerState State = PlayerState.Idle;
 
         Rigidbody2D rb;
-        float originalGravityScale;
+        Animator anim;  // 애니메이터 (없어도 null 체크로 에러 안 남)
 
         void Awake()
         {
             rb = GetComponent<Rigidbody2D>();
-            originalGravityScale = rb.gravityScale;
-            State = PlayerState.Idle;
-            // 권장: Inspector에서 Rigidbody2D.Interpolate = Interpolate로 설정
+            anim = GetComponent<Animator>();
+            rb.gravityScale = 0f;               // 대기 중엔 중력 없음
         }
 
         void FixedUpdate()
         {
             if (State == PlayerState.Playing)
             {
-                // 플레이 시작 시 gravity 복원/설정
-                if (rb.gravityScale != playGravityScale) rb.gravityScale = playGravityScale;
+                // 앞으로 이동 속도를 매 프레임 고정 (Y축은 물리에 맡김)
                 rb.linearVelocity = new Vector2(forwardSpeed, rb.linearVelocity.y);
                 return;
             }
 
             if (State == PlayerState.Idle)
             {
-                // Idle일 때 gravity 설정: Inspector에서 제어 가능
-                float targetGravity = overrideIdleGravity ? idleGravityScale : 0f;
-                if (rb.gravityScale != targetGravity) rb.gravityScale = targetGravity;
-
-                // 카메라 기준으로 X/Y 위치를 강제 고정하여 미세한 떨어짐 방지
+                // 대기 중엔 카메라 기준 위치에 고정
                 var cam = Camera.main;
                 if (cam != null)
                 {
-                    float targetX = cam.transform.position.x + idleXOffset;
-                    float targetY = cam.transform.position.y + idleYOffset;
-                    rb.position = new Vector2(targetX, targetY);
-                    rb.linearVelocity = Vector2.zero; // 속도 완전 고정
+                    rb.position = new Vector2(
+                        cam.transform.position.x + idleXOffset,
+                        cam.transform.position.y + idleYOffset
+                    );
                 }
+                rb.linearVelocity = Vector2.zero;
             }
         }
 
         void Update()
         {
-            bool inputDown =
-                Input.GetKeyDown(flapKey) ||
-                Input.GetMouseButtonDown(0) ||
-                (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began);
+            if (State == PlayerState.Dead) return;
+
+            // 스페이스 / 마우스 클릭 / 터치 중 하나라도 눌리면 true
+            bool inputDown = Input.GetKeyDown(flapKey)
+                          || Input.GetMouseButtonDown(0)
+                          || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began);
 
             if (State == PlayerState.Idle && inputDown)
             {
@@ -87,6 +79,7 @@ namespace MyBird
 
             if (State == PlayerState.Playing && inputDown)
             {
+                // 날갯짓: Y속도를 flapForce로 교체
                 rb.linearVelocity = new Vector2(forwardSpeed, flapForce);
             }
 
@@ -102,38 +95,61 @@ namespace MyBird
 
         void ApplyRotation()
         {
-            float targetAngle = Mathf.Clamp(rb.linearVelocity.y * rotationMultiplier, minRotation, maxRotation);
+            // Y속도를 각도로 변환 (올라갈 때 위로, 떨어질 때 아래로)
+            float targetAngle = Mathf.Clamp(
+                rb.linearVelocity.y * rotationMultiplier,
+                minRotation,
+                maxRotation
+            );
+
+            // eulerAngles는 0~360 반환 → 180 넘으면 음수로 변환해야 Lerp가 올바르게 동작
             float currentZ = transform.eulerAngles.z;
             if (currentZ > 180f) currentZ -= 360f;
+
             float smoothedZ = Mathf.Lerp(currentZ, targetAngle, rotationSmooth * Time.deltaTime);
             transform.rotation = Quaternion.Euler(0f, 0f, smoothedZ);
+        }
+
+        void Die()
+        {
+            State = PlayerState.Dead;
+
+            // 애니메이션을 현재 프레임에서 멈춤
+            if (anim != null)
+                anim.enabled = false;
+
+            if (GameManager.Instance != null)
+                GameManager.Instance.GameOver();
         }
 
         void OnCollisionEnter2D(Collision2D collision)
         {
             if (State == PlayerState.Dead) return;
 
-            // 파이프에 부딪히면 게임 정지(게임오버) + 플레이어가 추락하도록 gravity 복원
             if (collision.collider.CompareTag("Pipe"))
             {
-                State = PlayerState.Dead;
-                // 플레이어가 추락하도록 gravity 복원 (Inspector의 playGravityScale 사용)
-                rb.gravityScale = playGravityScale != 0f ? playGravityScale : originalGravityScale;
-                // 원하면 약간의 아래방향 관성 추가 (선택적)
+                // 앞으로 이동 멈추고 중력으로 뚝 떨어짐
                 rb.linearVelocity = new Vector2(0f, Mathf.Min(rb.linearVelocity.y, -1f));
-
-                if (GameManager.Instance != null) GameManager.Instance.GameOver();
+                Die();
                 return;
             }
 
-            // 바닥 등 다른 충돌은 기존처럼 처리(멈춤)
             if (collision.collider.CompareTag("Ground"))
             {
-                State = PlayerState.Dead;
                 rb.linearVelocity = Vector2.zero;
                 rb.simulated = false;
+                Die();
+            }
+        }
 
-                if (GameManager.Instance != null) GameManager.Instance.GameOver();
+        void OnTriggerEnter2D(Collider2D other)
+        {
+            // Tag가 "Point"인 트리거를 통과하면 점수 +1
+            // 파이프 루트의 IsTrigger BoxCollider2D가 Tag "Point"로 설정되어 있어야 함
+            if (other.CompareTag("Point"))
+            {
+                if (ScoreManager.Instance != null)
+                    ScoreManager.Instance.AddScore();
             }
         }
     }
