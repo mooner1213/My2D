@@ -2,54 +2,78 @@ using UnityEngine;
 
 namespace My2DGame
 {
+    /// <summary>
+    /// 배경의 패럴랙스 효과를 구현하는 클래스입니다.
+    /// </summary>
     public class ParallaxEffect : MonoBehaviour
     {
-        [Header("카메라 설정")]
-        [Tooltip("메인 카메라의 Transform을 넣으세요. 비어있으면 자동으로 찾습니다.")]
-        public Transform cameraTransform;
+        [Header("References")]
+        [SerializeField] private Transform cameraTransform;
+        [SerializeField] private Transform playerTransform;
 
-        [Header("패럴렉스 속도 설정 (0 ~ 1)")]
-        [Range(0f, 1f)]
-        [Tooltip("0이면 카메라와 똑같이 움직임(정지된 배경), 1이면 카메라가 움직여도 완벽히 고정됨(멀리 있는 배경)")]
-        public float parallaxFactorX = 0.5f; // X축 움직임 조절 계수
+        [Header("Settings")]
+        [SerializeField] private bool followX = true;
+        [SerializeField] private bool followY = false;
 
-        public bool useY = false;
-        [Range(0f, 1f)]
-        public float parallaxFactorY = 0.2f; // Y축 움직임 조절 계수
+        private Vector3 previousCameraPosition;
+        private Vector3 initialPosition;
 
-        // 기준이 될 카메라의 이전 위치를 기억하는 상자입니다.
-        Vector3 prevCamPos;
-
-        void Start()
+        private void Start()
         {
-            // 만약 인스펙터에서 카메라를 안 넣어줬다면, 자동으로 메인 카메라를 찾아서 연결합니다.
             if (cameraTransform == null && Camera.main != null)
                 cameraTransform = Camera.main.transform;
 
-            // 게임 시작 시점의 카메라 위치를 저장합니다.
-            if (cameraTransform != null)
-                prevCamPos = cameraTransform.position;
+            if (playerTransform == null)
+            {
+                // Try to find a component named "PlayerController" without requiring a compile-time reference.
+                var behaviours = FindObjectsOfType<MonoBehaviour>();
+                foreach (var b in behaviours)
+                {
+                    if (b != null && b.GetType().Name == "PlayerController")
+                    {
+                        playerTransform = b.transform;
+                        break;
+                    }
+                }
+
+                // Fallback: try find by tag "Player"
+                if (playerTransform == null)
+                {
+                    var playerObj = GameObject.FindWithTag("Player");
+                    if (playerObj != null)
+                        playerTransform = playerObj.transform;
+                }
+            }
+
+            previousCameraPosition = cameraTransform != null ? cameraTransform.position : Vector3.zero;
+            initialPosition = transform.position;
         }
 
-        void LateUpdate()
+        private void LateUpdate()
         {
-            if (cameraTransform == null) return;
+            if (cameraTransform == null || playerTransform == null) return;
 
-            // 1. 카메라가 지난 프레임에 비해 얼마나 움직였는지(이동량) 계산합니다.
-            Vector3 camDelta = cameraTransform.position - prevCamPos;
+            Vector3 camPos = cameraTransform.position;
+            Vector3 camDelta = camPos - previousCameraPosition;
 
-            // 2. 배경이 이동해야 할 목표 위치를 계산합니다.
-            // (카메라 이동량 * 패럴렉스 계수)만큼 배경을 현재 위치에서 더해줍니다.
-            Vector3 targetPos = transform.position;
+            float camToPlayer = Mathf.Abs(playerTransform.position.z - cameraTransform.position.z);
+            float camToBackground = Mathf.Abs(transform.position.z - cameraTransform.position.z);
 
-            if (parallaxFactorX > 0f) targetPos.x += camDelta.x * parallaxFactorX;
-            if (useY && parallaxFactorY > 0f) targetPos.y += camDelta.y * parallaxFactorY;
+            float parallaxFactor = 1f;
+            if (camToBackground > Mathf.Epsilon)
+            {
+                parallaxFactor = camToPlayer / camToBackground;
+            }
 
-            // 3. 계산된 부드러운 위치로 배경을 이동시킵니다.
-            transform.position = targetPos;
+            Vector3 newPos = transform.position;
+            if (followX)
+                newPos.x += camDelta.x * parallaxFactor;
+            if (followY)
+                newPos.y += camDelta.y * parallaxFactor;
 
-            // 4. 다음 프레임 계산을 위해 현재 카메라 위치를 과거 위치로 저장합니다.
-            prevCamPos = cameraTransform.position;
+            transform.position = new Vector3(newPos.x, newPos.y, transform.position.z);
+
+            previousCameraPosition = camPos;
         }
     }
 }

@@ -3,140 +3,224 @@ using UnityEngine.InputSystem;
 
 namespace My2DGame
 {
-    [RequireComponent(typeof(Rigidbody2D))]
+    /// <summary>
+    /// 플레이어 캐릭터의 움직임과 행동을 제어하는 클래스입니다.
+    /// </summary>
     public class PlayerController : MonoBehaviour
     {
-        [Header("Movement")]
-        public float moveSpeed = 5f;            // 걷기 속도
-        public float runSpeed = 10f;            // 달리기 속도
-
-        [Header("Jump")]
-        public float jumpForce = 10f;           // 점프 초기 힘
-        public float jumpHoldMultiplier = 2f;   // 버튼 누르고 있을 때 추가 중력 감소 배율
-        public float fallMultiplier = 2.5f;     // 낙하 시 중력 배율 (클수록 빠르게 떨어짐)
-        public float lowJumpMultiplier = 2f;    // 버튼 일찍 뗐을 때 중력 배율
-
-        [Header("Ground Check")]
-        public Transform groundCheck;           // 발 위치 트랜스폼 (빈 오브젝트로 발 위치에 배치)
-        public float groundCheckRadius = 0.1f;  // 땅 감지 반경
-        public LayerMask groundLayer;           // 땅으로 인식할 레이어
-
-        private bool isMove = false;
-        private bool isRun = false;
-        private bool isJump = false;
-        private bool isFall = false;
-        private bool isGrounded = false;        // 현재 땅에 있는지
-        private bool jumpButtonHeld = false;    // 점프 버튼 누르고 있는지
-
-        private Rigidbody2D rb;
+        #region Variables
+        //참조
+        private Rigidbody2D rb2D;
         private Animator animator;
+        private TouchingDirection touchingDirection;
+        private Damageable damageable;
+
+        [Header("Movement")]        
+        [SerializeField] private float walkSpeed = 4;
+        [SerializeField] private float runSpeed = 8;
+        private float moveSpeed;
+
         private Vector2 moveInput = Vector2.zero;
 
-        void Awake()
+        //걷기 체크
+        private bool isMove = false;
+        //뛰기 체크
+        private bool isRun = false;
+
+        //반전
+        private bool isFacingRight = true;
+
+        //점프 - y축의 속도를 jumpForce 값으로 설정
+        [SerializeField] private float jumpForce = 10f;
+        #endregion
+
+        #region Property
+        public bool IsMove
         {
-            rb = GetComponent<Rigidbody2D>();
-            animator = GetComponent<Animator>();
-        }
-
-        void Update()
-        {
-            // 원형으로 땅 감지 (groundCheck 위치에서 groundLayer에 닿으면 true)
-            isGrounded = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
-
-            // 낙하 중인지 판단 (Y속도가 음수면 낙하)
-            bool falling = rb.linearVelocity.y < -0.1f;
-
-            // 착지 감지: 이전에 점프/낙하 중이었는데 땅에 닿으면
-            if (isGrounded && (isJump || isFall))
+            get
             {
-                isJump = false;
-                isFall = false;
-                animator.SetBool(AnimationString.JumpTrigger, false);
-                animator.SetBool(AnimationString.isFall, false);
+                return isMove; 
             }
-
-            // 낙하 애니메이션: 점프 중에 내려오기 시작하면
-            if (isJump && falling && !isFall)
+            private set
             {
-                isFall = true;
-                animator.SetBool(AnimationString.isFall, true);
+                isMove = value;
+                animator.SetBool(AnimationString.isMove, value);
             }
         }
 
-        void FixedUpdate()
+        public bool IsRun
         {
-            if (rb == null) return;
-
-            // 좌우 이동 (달리기 여부에 따라 속도 다름)
-            float currentSpeed = isRun ? runSpeed : moveSpeed;
-            rb.linearVelocity = new Vector2(moveInput.x * currentSpeed, rb.linearVelocity.y);
-
-            // 점프 높이 조절: 버튼을 누르고 있으면 더 높이 올라감
-            // 버튼을 일찍 떼면 중력을 더 강하게 적용해서 낮게 점프
-            if (rb.linearVelocity.y > 0 && jumpButtonHeld)
+            get
             {
-                // 버튼 누르고 있는 동안 중력 약하게 (더 높이 올라감)
-                rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (jumpHoldMultiplier - 1) * Time.fixedDeltaTime;
+                return isRun;
             }
-            else if (rb.linearVelocity.y > 0 && !jumpButtonHeld)
+            private set
             {
-                // 버튼 일찍 뗐으면 중력 강하게 (낮게 점프)
-                rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.fixedDeltaTime;
-            }
-            else if (rb.linearVelocity.y < 0)
-            {
-                // 낙하 시 중력 강하게 (더 빠르게 떨어짐)
-                rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.fixedDeltaTime;
+                isRun = value;
+                animator.SetBool(AnimationString.isRun, value);
             }
         }
 
-        // Input Action의 Move 이벤트에 연결
+        public bool IsFacingRight
+        {
+            get
+            {
+                return isFacingRight;
+            }
+            private set
+            {
+                //반전 체크
+                if(isFacingRight != value)
+                {
+                    transform.localScale *= new Vector2(-1, 1);
+                }
+                isFacingRight = value;
+            }
+        }
+
+        //이동 제어 - 애니메이터 파라미터 값 읽어오기
+        public bool CannotMove
+        {
+            get
+            {
+                return animator.GetBool(AnimationString.cannotMove);
+            }
+        }
+
+        // 속도 잠김 상태 읽어오기
+        public bool LockVelocity
+        {
+            get
+            {
+                return animator.GetBool(AnimationString.lockVelocity);
+            }
+        }
+        #endregion
+
+        #region Unity Event Method
+        private void Awake()
+        {
+            //참조 - 인스턴스 가져오기
+            rb2D = GetComponent<Rigidbody2D>();
+            if (rb2D == null)
+            {
+                Debug.LogError("PlayerController requires a Rigidbody2D component.");
+            }
+            
+            animator = this.GetComponent<Animator>();
+            touchingDirection = this.GetComponent<TouchingDirection>();
+        }
+
+        private void Start()
+        {
+            //초기화
+        }
+
+        private void FixedUpdate()
+        {
+            if (rb2D == null) return;
+
+            if (LockVelocity == false)
+            {
+                //이동속도 얻어오기
+                moveSpeed = GetCurrentMoveSpeed();
+
+                // Rigidbody2D.velocity를 직접 설정하여 좌우 이동을 수행
+                rb2D.linearVelocity = new Vector2(moveInput.x * moveSpeed, rb2D.linearVelocity.y);
+
+                //애니메이션 셋팅
+                animator.SetFloat(AnimationString.yVelocity, rb2D.linearVelocity.y);
+            }
+        }
+        #endregion
+
+        #region Custom Method
+        // New Input System -> Input Action "Move"에서 Invoke Unity Event 로 이 메서드를 연결하세요.
+        // signature: Vector2 (x: 좌우 입력, y: 상하 입력) 를 받습니다.
         public void OnMove(InputAction.CallbackContext context)
         {
             moveInput = context.ReadValue<Vector2>();
 
-            isMove = moveInput != Vector2.zero;
-            animator.SetBool(AnimationString.isMove, isMove);
+            //입력값에 따라 애니메이션 파라미터 제어
+            IsMove = (moveInput != Vector2.zero);
 
-            if (moveInput.x < 0)
-                transform.localScale = new Vector3(-1, 1, 1);
-            else if (moveInput.x > 0)
-                transform.localScale = new Vector3(1, 1, 1);
+            //바라보는 방향 전환
+            SetFacingDirection(moveInput);
         }
 
-        // Input Action의 Run 이벤트에 연결 (Shift 키)
-        public void OnRun(InputAction.CallbackContext context)
+        public void OnSprint(InputAction.CallbackContext context)
         {
-            isRun = context.ReadValueAsButton();
-            animator.SetBool(AnimationString.isRun, isRun);
+            //버튼 클릭 여부
+            if(context.started) //버튼 down 시작
+            {
+                IsRun = true;
+            }
+            else if(context.canceled) //버튼 up 뗄때
+            {
+                IsRun = false;
+            }
         }
 
-        // Input Action의 Jump 이벤트에 연결 (Space 키)
         public void OnJump(InputAction.CallbackContext context)
         {
-            if (context.started && isGrounded)
+            //버튼 클릭 여부
+            if (context.started && touchingDirection.IsGround == true) //스페이스바 버튼 down 시작, 캐릭터가 그라운드에 있으면
             {
-                // 점프 시작: 위로 힘 주기
-
-                rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce);
-                isJump = true;
-                jumpButtonHeld = true;
-                animator.SetBool(AnimationString.isJump, true);
-            }
-
-            if (context.canceled)
-            {
-                // 버튼 뗌: 낮은 점프로 전환
-                jumpButtonHeld = false;
+                animator.SetTrigger(AnimationString.jumpTrigger);
+                rb2D.linearVelocity = new Vector2(rb2D.linearVelocity.x, jumpForce);
             }
         }
 
-        // 땅 감지 범위를 씬 뷰에서 시각적으로 확인할 수 있게 그려줌
-        void OnDrawGizmosSelected()
+
+        public void OnAttack(InputAction.CallbackContext context)
         {
-            if (groundCheck == null) return;
-            Gizmos.color = Color.green;
-            Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
+            //버튼 클릭 여부
+            if (context.started && touchingDirection.IsGround == true) //마우스 왼클릭, 캐릭터가 그라운드에 있으면
+            {
+                animator.SetTrigger(AnimationString.attackTrigger);                
+            }
         }
+
+
+        //현재 이동 속도 구하기
+        float GetCurrentMoveSpeed()
+        {
+            //이동제어 파라미터값이 true 또는 이동하지 않으면
+            if(CannotMove == true || IsMove == false)
+            {
+                return 0f;
+            }
+
+            //걷기와 뛰기 구분
+            if(IsRun)
+            {
+                return runSpeed;
+            }
+            else
+            {
+                return walkSpeed;
+            }
+        }
+
+        //바라보는 방향 전환
+        void SetFacingDirection(Vector2 moveInput)
+        {
+            if(moveInput.x > 0f && IsFacingRight == false)
+            {
+                IsFacingRight = true;
+            }
+            else if (moveInput.x < 0f && IsFacingRight == true)
+            {
+                IsFacingRight = false;
+            }
+        }
+
+        // 데미지 이벤트 함수에 등록되는 함수
+        void OnHit(float damage, Vector2 knockback)
+        {
+            // 넉백 값 적용
+            rb2D.linearVelocity = new Vector2(knockback.x, rb2D.linearVelocity.y + knockback.y);
+        }
+        #endregion
     }
 }
